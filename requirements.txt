@@ -1,0 +1,7 @@
+streamlit
+google-generativeai
+pandas
+pypdf
+pdfplumber
+chromadb
+langchain-google-genai
