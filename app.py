@@ -27,14 +27,14 @@ if user_input:
         response = model.generate_content(f"Explain this factory defect record: {data}")
         st.write(response.text) """
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import sqlite3
 import pandas as pd
 import pypdf
 import os
 
 # =============================
-# 1. PAGE CONFIG
+# PAGE CONFIG
 # =============================
 st.set_page_config(
     page_title="Siemens 840D Maintenance Agent",
@@ -43,7 +43,7 @@ st.set_page_config(
 )
 
 # =============================
-# 2. AI INITIALIZATION (STABLE)
+# AI INITIALIZATION (NEW SDK)
 # =============================
 @st.cache_resource
 def initialize_ai():
@@ -52,17 +52,16 @@ def initialize_ai():
         return None
 
     try:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        return model
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        return client
     except Exception as e:
         st.error(f"AI Initialization Error: {e}")
         return None
 
-model = initialize_ai()
+client = initialize_ai()
 
 # =============================
-# 3. DATABASE FUNCTION
+# DATABASE FUNCTION
 # =============================
 def query_factory_db(search_term):
     if not os.path.exists("factory_data.db"):
@@ -86,7 +85,7 @@ def query_factory_db(search_term):
         return pd.DataFrame({"Error": [str(e)]})
 
 # =============================
-# 4. PDF MANUAL RAG FUNCTION
+# PDF RAG FUNCTION
 # =============================
 def extract_manual_context(user_query):
     pdf_path = "diagnostics_manual-sinumerik 840d.pdf"
@@ -117,7 +116,7 @@ def extract_manual_context(user_query):
         return f"Error reading PDF: {e}"
 
 # =============================
-# 5. UI
+# UI
 # =============================
 st.title("👨‍🔧 Siemens SINUMERIK 840D Intelligence Agent")
 st.info("This agent connects SQL Defect Logs with Siemens Technical Manuals.")
@@ -135,24 +134,18 @@ with tab1:
         "Example: 'How do I fix Alarm 61303?' or 'Analyze product 10'"
     )
 
-    if user_query:
+    if user_query and client:
 
-        if not model:
-            st.warning("AI model not initialized.")
-        else:
-            with st.spinner("Analyzing manuals and logs..."):
+        with st.spinner("Analyzing manuals and logs..."):
 
-                # Step 1: Manual Context
-                manual_context = extract_manual_context(user_query)
+            manual_context = extract_manual_context(user_query)
 
-                # Step 2: Database Context
-                db_context = ""
-                if any(char.isdigit() for char in user_query):
-                    df = query_factory_db(user_query)
-                    db_context = df.to_string()
+            db_context = ""
+            if any(char.isdigit() for char in user_query):
+                df = query_factory_db(user_query)
+                db_context = df.to_string()
 
-                # Step 3: Prompt Engineering
-                prompt = f"""
+            prompt = f"""
 You are a Senior Siemens SINUMERIK 840D Maintenance Engineer.
 
 Manual Context:
@@ -170,22 +163,16 @@ Instructions:
 - Keep the answer structured and operational.
 """
 
-                try:
-                    response = model.generate_content(prompt)
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                )
 
-                    # Safe response extraction
-                    output = getattr(response, "text", None)
+                st.chat_message("assistant").write(response.text)
 
-                    if not output:
-                        output = str(response)
-
-                    st.chat_message("assistant").write(output)
-
-                except Exception as e:
-                    if "429" in str(e):
-                        st.warning("Quota reached. Please wait and retry.")
-                    else:
-                        st.error(f"AI Error: {e}")
+            except Exception as e:
+                st.error(f"AI Error: {e}")
 
 # =============================
 # TAB 2 - DATABASE VIEW
@@ -210,7 +197,7 @@ with st.sidebar:
 - Python (Streamlit)
 - SQLite (Structured Logs)
 - PyPDF (Unstructured Manuals)
-- Gemini 1.5 Flash (RAG Engine)
+- Gemini 2.0 Flash (RAG Engine)
 
 Optimized for factory-floor mobile browser use.
 """)
