@@ -52,7 +52,7 @@ def query_db(search_term):
 
 def get_ai_response(prompt, context_data):
     """Send user query and data context to Gemini."""
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     full_prompt = f"Context from Manuals/Data: {context_data}\n\nUser Question: {prompt}"
     response = model.generate_content(full_prompt)
     return response.text
@@ -79,4 +79,5 @@ with tab2:
     search = st.text_input("Search by Defect or Product ID")
     if search:
         data = query_db(search)
+
         st.dataframe(data)
