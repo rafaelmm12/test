@@ -27,24 +27,24 @@ if user_input:
         response = model.generate_content(f"Explain this factory defect record: {data}")
         st.write(response.text) """
 import streamlit as st
-from google import genai
+import google.generativeai as genai
 import sqlite3
 import pandas as pd
 import pypdf
 import os
 
-# =============================
+# =====================================
 # PAGE CONFIG
-# =============================
+# =====================================
 st.set_page_config(
     page_title="Siemens 840D Maintenance Agent",
     page_icon="⚙️",
     layout="wide"
 )
 
-# =============================
-# AI INITIALIZATION (NEW SDK)
-# =============================
+# =====================================
+# GEMINI INITIALIZATION (LEGACY SAFE)
+# =====================================
 @st.cache_resource
 def initialize_ai():
     if "GEMINI_API_KEY" not in st.secrets:
@@ -52,27 +52,36 @@ def initialize_ai():
         return None
 
     try:
-        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        return client
+        genai.configure(
+            api_key=st.secrets["GEMINI_API_KEY"]
+        )
+
+        # IMPORTANT: use -latest for old keys
+        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+
+        return model
+
     except Exception as e:
         st.error(f"AI Initialization Error: {e}")
         return None
 
-client = initialize_ai()
+model = initialize_ai()
 
-# =============================
+# =====================================
 # DATABASE FUNCTION
-# =============================
+# =====================================
 def query_factory_db(search_term):
     if not os.path.exists("factory_data.db"):
         return pd.DataFrame({"Error": ["Database file not found."]})
 
     try:
         conn = sqlite3.connect("factory_data.db")
+
         query = """
-        SELECT * FROM defects 
+        SELECT * FROM defects
         WHERE defect_id = ? OR product_id = ?
         """
+
         df = pd.read_sql(query, conn, params=(search_term, search_term))
         conn.close()
 
@@ -84,14 +93,14 @@ def query_factory_db(search_term):
     except Exception as e:
         return pd.DataFrame({"Error": [str(e)]})
 
-# =============================
-# PDF RAG FUNCTION
-# =============================
+# =====================================
+# PDF RAG FUNCTION (SAFE)
+# =====================================
 def extract_manual_context(user_query):
     pdf_path = "diagnostics_manual-sinumerik 840d.pdf"
 
     if not os.path.exists(pdf_path):
-        return "Manual file not found on server."
+        return "Manual file not found."
 
     context = ""
 
@@ -104,28 +113,29 @@ def extract_manual_context(user_query):
             if text and user_query.lower() in text.lower():
                 context += text + "\n"
 
-            if len(context) > 4000:
+            # Keep token usage small for free tier
+            if len(context) > 3000:
                 break
 
         if context.strip() == "":
             return "No relevant section found in first 50 pages."
 
-        return context[:4000]
+        return context[:3000]
 
     except Exception as e:
-        return f"Error reading PDF: {e}"
+        return f"PDF read error: {e}"
 
-# =============================
+# =====================================
 # UI
-# =============================
+# =====================================
 st.title("👨‍🔧 Siemens SINUMERIK 840D Intelligence Agent")
-st.info("This agent connects SQL Defect Logs with Siemens Technical Manuals.")
+st.info("AI-powered maintenance assistant using defect logs + technical manual.")
 
 tab1, tab2 = st.tabs(["💬 AI Troubleshooting", "📊 Database Search"])
 
-# =============================
+# =====================================
 # TAB 1 - AI CHAT
-# =============================
+# =====================================
 with tab1:
 
     st.subheader("Ask a Maintenance Question")
@@ -134,17 +144,20 @@ with tab1:
         "Example: 'How do I fix Alarm 61303?' or 'Analyze product 10'"
     )
 
-    if user_query and client:
+    if user_query and model:
 
         with st.spinner("Analyzing manuals and logs..."):
 
+            # Manual context
             manual_context = extract_manual_context(user_query)
 
+            # DB context
             db_context = ""
             if any(char.isdigit() for char in user_query):
                 df = query_factory_db(user_query)
                 db_context = df.to_string()
 
+            # Prompt (token optimized)
             prompt = f"""
 You are a Senior Siemens SINUMERIK 840D Maintenance Engineer.
 
@@ -157,26 +170,31 @@ Database Context:
 User Question:
 {user_query}
 
-Instructions:
-- Provide a professional and practical remedy.
-- If an alarm code is referenced, explain step-by-step what the technician should inspect.
-- Keep the answer structured and operational.
+Provide a structured, step-by-step professional remedy.
+If an alarm code is mentioned, clearly explain what the technician must inspect.
+Keep the response concise and operational.
 """
 
             try:
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=prompt,
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": 0.2,
+                        "max_output_tokens": 800
+                    }
                 )
 
                 st.chat_message("assistant").write(response.text)
 
             except Exception as e:
-                st.error(f"AI Error: {e}")
+                if "429" in str(e):
+                    st.warning("Free tier quota reached. Wait a minute and retry.")
+                else:
+                    st.error(f"AI Error: {e}")
 
-# =============================
-# TAB 2 - DATABASE VIEW
-# =============================
+# =====================================
+# TAB 2 - DATABASE SEARCH
+# =====================================
 with tab2:
 
     st.subheader("Machine Defect Logs (SQLite)")
@@ -187,17 +205,17 @@ with tab2:
         results = query_factory_db(search_id)
         st.dataframe(results, use_container_width=True)
 
-# =============================
+# =====================================
 # SIDEBAR
-# =============================
+# =====================================
 with st.sidebar:
     st.header("Project Architecture")
     st.markdown("""
 **Data Stack:**
 - Python (Streamlit)
 - SQLite (Structured Logs)
-- PyPDF (Unstructured Manuals)
-- Gemini 2.0 Flash (RAG Engine)
+- PyPDF (Manual Parsing)
+- Gemini 1.5 Flash (Legacy Free Tier)
 
-Optimized for factory-floor mobile browser use.
+Token-optimized for free quota usage.
 """)
