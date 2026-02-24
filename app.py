@@ -27,7 +27,7 @@ if user_input:
         response = model.generate_content(f"Explain this factory defect record: {data}")
         st.write(response.text) """
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import sqlite3
 import pandas as pd
 import pypdf
@@ -43,7 +43,7 @@ st.set_page_config(
 )
 
 # =====================================
-# GEMINI INITIALIZATION (LEGACY SAFE)
+# AI INITIALIZATION (V1 API)
 # =====================================
 @st.cache_resource
 def initialize_ai():
@@ -52,23 +52,18 @@ def initialize_ai():
         return None
 
     try:
-        genai.configure(
+        client = genai.Client(
             api_key=st.secrets["GEMINI_API_KEY"]
         )
-
-        # IMPORTANT: use -latest for old keys
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
-
-        return model
-
+        return client
     except Exception as e:
         st.error(f"AI Initialization Error: {e}")
         return None
 
-model = initialize_ai()
+client = initialize_ai()
 
 # =====================================
-# DATABASE FUNCTION
+# DATABASE
 # =====================================
 def query_factory_db(search_term):
     if not os.path.exists("factory_data.db"):
@@ -76,12 +71,10 @@ def query_factory_db(search_term):
 
     try:
         conn = sqlite3.connect("factory_data.db")
-
         query = """
         SELECT * FROM defects
         WHERE defect_id = ? OR product_id = ?
         """
-
         df = pd.read_sql(query, conn, params=(search_term, search_term))
         conn.close()
 
@@ -94,7 +87,7 @@ def query_factory_db(search_term):
         return pd.DataFrame({"Error": [str(e)]})
 
 # =====================================
-# PDF RAG FUNCTION (SAFE)
+# PDF RAG
 # =====================================
 def extract_manual_context(user_query):
     pdf_path = "diagnostics_manual-sinumerik 840d.pdf"
@@ -113,12 +106,11 @@ def extract_manual_context(user_query):
             if text and user_query.lower() in text.lower():
                 context += text + "\n"
 
-            # Keep token usage small for free tier
             if len(context) > 3000:
                 break
 
         if context.strip() == "":
-            return "No relevant section found in first 50 pages."
+            return "No relevant section found."
 
         return context[:3000]
 
@@ -129,12 +121,12 @@ def extract_manual_context(user_query):
 # UI
 # =====================================
 st.title("👨‍🔧 Siemens SINUMERIK 840D Intelligence Agent")
-st.info("AI-powered maintenance assistant using defect logs + technical manual.")
+st.info("AI-powered maintenance assistant (Gemini v1 API).")
 
 tab1, tab2 = st.tabs(["💬 AI Troubleshooting", "📊 Database Search"])
 
 # =====================================
-# TAB 1 - AI CHAT
+# TAB 1
 # =====================================
 with tab1:
 
@@ -144,20 +136,17 @@ with tab1:
         "Example: 'How do I fix Alarm 61303?' or 'Analyze product 10'"
     )
 
-    if user_query and model:
+    if user_query and client:
 
         with st.spinner("Analyzing manuals and logs..."):
 
-            # Manual context
             manual_context = extract_manual_context(user_query)
 
-            # DB context
             db_context = ""
             if any(char.isdigit() for char in user_query):
                 df = query_factory_db(user_query)
                 db_context = df.to_string()
 
-            # Prompt (token optimized)
             prompt = f"""
 You are a Senior Siemens SINUMERIK 840D Maintenance Engineer.
 
@@ -170,30 +159,26 @@ Database Context:
 User Question:
 {user_query}
 
-Provide a structured, step-by-step professional remedy.
-If an alarm code is mentioned, clearly explain what the technician must inspect.
-Keep the response concise and operational.
+Provide a structured, step-by-step professional maintenance remedy.
+Keep it concise and operational.
 """
 
             try:
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "temperature": 0.2,
-                        "max_output_tokens": 800
-                    }
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt,
                 )
 
                 st.chat_message("assistant").write(response.text)
 
             except Exception as e:
                 if "429" in str(e):
-                    st.warning("Free tier quota reached. Wait a minute and retry.")
+                    st.warning("Free tier quota reached. Wait and retry.")
                 else:
                     st.error(f"AI Error: {e}")
 
 # =====================================
-# TAB 2 - DATABASE SEARCH
+# TAB 2
 # =====================================
 with tab2:
 
@@ -211,11 +196,11 @@ with tab2:
 with st.sidebar:
     st.header("Project Architecture")
     st.markdown("""
-**Data Stack:**
-- Python (Streamlit)
-- SQLite (Structured Logs)
-- PyPDF (Manual Parsing)
-- Gemini 1.5 Flash (Legacy Free Tier)
+**Data Stack**
+- Streamlit
+- SQLite
+- PyPDF
+- Gemini 1.5 Flash (v1 API)
 
-Token-optimized for free quota usage.
+No deprecated v1beta usage.
 """)
