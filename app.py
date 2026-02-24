@@ -68,7 +68,7 @@ def query_db(search_term):
 
 def get_ai_response(prompt, context_data):
     # Using 'gemini-1.5-flash' with the models/ prefix is the most stable
-    model = genai.GenerativeModel('models/gemini-1.5-flash')
+    model = genai.GenerativeModel('models/gemini-2.0-flash')
     full_prompt = f"Use this manual context: {context_data}\n\nAnswer this: {prompt}"
     response = model.generate_content(full_prompt)
     return response.text
@@ -97,3 +97,4 @@ with tab2:
             st.dataframe(data)
         else:
             st.warning("No records found.")
+
