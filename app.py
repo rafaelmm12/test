@@ -29,55 +29,71 @@ if user_input:
 import streamlit as st
 import google.generativeai as genai
 import sqlite3
+import pandas as pd
 import pypdf
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Factory Helper Agent", page_icon="⚙️", layout="wide")
 
 # --- SECRETS & AI SETUP ---
-# You'll set this key in the Streamlit Cloud sidebar settings
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 else:
-    st.error("Missing GEMINI_API_KEY. Please add it to Streamlit Secrets.")
+    st.sidebar.error("⚠️ Missing API Key in Secrets!")
 
 # --- DATA FUNCTIONS ---
+def extract_pdf_context(query):
+    """Simple search to find relevant pages in the PDF manual."""
+    context = ""
+    try:
+        # We'll prioritize the Diagnostics Manual for error codes
+        reader = pypdf.PdfReader("diagnostics_manual-sinumerik 840d.pdf")
+        # To save tokens, we only send pages that mention the user's query
+        for page in reader.pages[:100]: # Limit to first 100 pages for performance
+            text = page.extract_text()
+            if query.lower() in text.lower():
+                context += text + "\n"
+                if len(context) > 5000: break # Don't overload the prompt
+    except Exception as e:
+        context = "Error reading manuals: " + str(e)
+    return context
+
 def query_db(search_term):
-    """Search for defects by ID or Type in the SQLite DB."""
     conn = sqlite3.connect('factory_data.db')
-    query = f"SELECT * FROM defects WHERE defect_id='{search_term}' OR product_id='{search_term}'"
-    df = pd.read_sql(query, conn)
+    # Use parameterized query to prevent SQL injection
+    query = "SELECT * FROM defects WHERE defect_id = ? OR product_id = ?"
+    df = pd.read_sql(query, conn, params=(search_term, search_term))
     conn.close()
     return df
 
 def get_ai_response(prompt, context_data):
-    """Send user query and data context to Gemini."""
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
-    full_prompt = f"Context from Manuals/Data: {context_data}\n\nUser Question: {prompt}"
+    # Using 'gemini-1.5-flash' with the models/ prefix is the most stable
+    model = genai.GenerativeModel('models/gemini-1.5-flash')
+    full_prompt = f"Use this manual context: {context_data}\n\nAnswer this: {prompt}"
     response = model.generate_content(full_prompt)
     return response.text
 
 # --- USER INTERFACE ---
 st.title("👨‍🔧 Maintenance Helper Agent")
-st.markdown("Get machine maintenance data and troubleshooting advice directly from the official manuals.")
 
 tab1, tab2 = st.tabs(["💬 AI Helper", "📊 Machine Data"])
 
 with tab1:
-    st.subheader("Ask the Expert")
-    query = st.text_input("Example: 'What is the remedy for Alarm 27001?' or 'Explain defect 4'")
+    st.subheader("Technical Troubleshooting")
+    query = st.text_input("Ask about an alarm code or defect procedure:")
     
     if query:
-        with st.spinner("Analyzing manuals..."):
-            # Simple simulation: In a real app, you'd extract PDF text here
-            # For the demo, we use the enriched data we built
-            answer = get_ai_response(query, "Reference: SINUMERIK 840D sl Diagnostics Manual")
+        with st.spinner("Searching manuals and generating solution..."):
+            manual_context = extract_pdf_context(query)
+            answer = get_ai_response(query, manual_context)
             st.chat_message("assistant").write(answer)
 
 with tab2:
     st.subheader("Defect Database")
-    search = st.text_input("Search by Defect or Product ID")
+    search = st.text_input("Enter Defect ID or Product ID")
     if search:
         data = query_db(search)
-
-        st.dataframe(data)
+        if not data.empty:
+            st.dataframe(data)
+        else:
+            st.warning("No records found.")
